@@ -1,0 +1,145 @@
+---
+title: "CMPT 459.1-19. Programming Assignment 4"
+subtitle: "FIFA 19 Players"
+author: "Bob Liu - 301236133"
+output: html_notebook
+---
+
+## Reading the data
+```{r}
+train <- read.csv('pairsFifa-train.csv')
+test <- read.csv('pairsFifa-test.csv')
+valid <- read.csv('pairsFifa-valid.csv')
+train$Nationality<-as.integer(train$Nationality)
+train$Nationality.1<-as.integer(train$Nationality.1)
+valid$Nationality<-as.integer(valid$Nationality)
+valid$Nationality.1<-as.integer(valid$Nationality.1)
+test$Nationality<-as.integer(test$Nationality)
+test$Nationality.1<-as.integer(test$Nationality.1)
+
+
+
+#train[] <- lapply(train, function(x) {
+    #if(is.factor(x)) as.integer(x) else x
+#})
+
+#valid[] <- lapply(valid, function(x) {
+    #if(is.factor(x)) as.integer(x) else x
+#})
+
+#test[] <- lapply(test, function(x) {
+    #if(is.factor(x)) as.integer(x) else x
+#})
+
+
+
+```
+
+
+
+### Task 1
+
+##Feature Selection
+```{r}
+library(caret)
+library(xgboost)
+library(mlbench)
+library(randomForest)
+
+
+
+train <- subset(train, select = -c(Pair.ID))
+
+
+samp <- train[sample(nrow(train),n), ]
+
+modelrf <- randomForest(Chemistry ~ ., data = samp, importance = TRUE)
+
+rfImp <- importance(modelrf, scale=TRUE)
+print(rfImp)
+
+
+
+```
+
+
+##Predict and validation
+```{r}
+library(caret)
+library(xgboost)
+library(mlbench)
+library(randomForest)
+library(doParallel)
+
+
+#Feature Selected
+n <- 1*nrow(train)
+set.seed(1)
+
+train <- subset(train, select = c(Nationality,Nationality.1,Position,Position.1,Release.Clause,Release.Clause.1,Wage,Wage.1,Value,Value.1,Potential,Potential.1,Overall,Overall.1,Reactions,Reactions.1,BallControl,BallControl.1,ShortPassing,ShortPassing.1,Dribbling,Dribbling.1,Chemistry))
+
+samp <- train[sample(nrow(train),n), ]
+
+
+
+xgbGrid <- expand.grid(nrounds = c(1, 10),
+                       max_depth = 8,
+                       eta = 0.3,
+                       gamma = 0,
+                       colsample_bytree = 1,
+                       min_child_weight = 1,
+                       subsample = 0.5)
+
+proc1 <- makePSOCKcluster(2)
+registerDoParallel(proc1)
+modelxgb <- train(
+            Chemistry ~ ., 
+            data = samp,
+            tuneGrid = xgbGrid,
+            method = "xgbTree",
+            trControl = trainControl(method = "cv", number = 10)
+)
+
+stopCluster(proc1)
+
+confusionMatrix(predict(modelxgb, valid), valid$Chemistry, positive = 'Good')
+
+
+proc <- makePSOCKcluster(5)
+registerDoParallel(proc)
+
+modelrf <-  train(
+            Chemistry ~ ., 
+            data = samp,
+            method = "rf",
+            tuneLength = 3,
+            Importance = TRUE,
+            ntree = 400,
+            trControl = trainControl(method = "cv", number = 10)
+)
+
+stopCluster(proc)
+
+confusionMatrix(predict(modelrf, valid), valid$Chemistry, positive = 'Good')
+
+
+```
+
+Task 1 Report: 
+For feature selection, 22 features have been selected from observing variable importance. These features have been selected from MeanDecreaseAccuracy with values over 80 to determine the usefulness of each variable. XGboost has been modeled and tested on validation set with accuracy of 65%. On the other hand, Random Forest has achieved 74% with both tuning involved. I have converted all datesets Nationality and Nationality.1 attribute format to Integer instead as there are too many factor levels for RandomForest to utilize. These Integer correspond to a country and can then be used to model. Cross validation 10 folds was used to reduce over-fitting possiblity and decided not to mix both training dataset with validation dataset as one complete set to make sure the model does not fit very closely to the dataset. Using Cross Validation as a tuning parameter on caret randomForest, is a powerful way to prevent overfitting as it allows tuning of hyperparamters with training set and uses the last fold as test set and treats it as unseen data.
+
+
+##Task 2
+```{r}
+
+Chemistry<-predict(modelrf, test)
+print(Chemistry)
+
+
+Pair.ID <- test$Pair.ID
+txt <- data.frame(Pair.ID, Chemistry)
+write.table(txt,"PA4_301236133.txt",sep=", ",row.names=FALSE, quote = FALSE)
+
+```
+
+
